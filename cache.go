@@ -8,15 +8,16 @@ import (
 // Cache is the public interface for the in-memory store.
 type Cache interface {
 	// Set stores a key-value pair; ttl <= 0 means no expiry
-	Set(key string, value interface{}, ttl time.Duration)
+	Set(key string, value interface{})
+
 	// SetWithDuration stores value with duration (alias)
 	SetWithDuration(key string, value interface{}, d time.Duration)
 
 	// Get retrieves a value (value, true) if present and not expired.
 	Get(key string) (interface{}, bool)
 
-	// Delete removes a key
-	Delete(key string)
+	// Delete removes a key; returns true if the key existed
+	Delete(key string) bool
 
 	// Exists returns true if key exists and not expired
 	Exists(key string) bool
@@ -66,6 +67,9 @@ type cache struct {
 	cleanupInterval time.Duration
 	stopChan        chan struct{}
 	stopOnce        sync.Once
+	statsRing       statsRing
+	maxKeys         int
+	evictionPolicy  EvictionPolicy
 }
 
 // Close stops background cleanup (safe to call multiple times).

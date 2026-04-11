@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/yourusername/go-memstore"
+	"github.com/San-B-09/go-memstore"
 )
 
 func main() {
@@ -18,7 +18,7 @@ func main() {
 	c := memstore.NewCache()
 	defer c.Close()
 
-	c.Set("foo", "bar", 0) // ttl = 0 → no expiry
+	c.Set("foo", "bar")
 	val, ok := c.Get("foo")
 	fmt.Println("foo:", val, ok) // foo: bar true
 
@@ -26,7 +26,7 @@ func main() {
 	lazy := memstore.NewCache(memstore.WithCleanupInterval(0))
 	defer lazy.Close()
 
-	lazy.Set("temp", "gone soon", 2*time.Second)
+	lazy.SetWithDuration("temp", "gone soon", 2*time.Second)
 	time.Sleep(3 * time.Second)
 	_, ok = lazy.Get("temp")
 	fmt.Println("temp exists after 3s?", ok) // false

@@ -2,24 +2,50 @@ package memstore
 
 import "time"
 
-// Set stores a key-value pair with TTL (ttl <= 0 means no expiry)
-func (c *cache) Set(key string, value interface{}, ttl time.Duration) {
-	var exp time.Time
-	if ttl > 0 {
-		exp = time.Now().Add(ttl)
+// atCapacity reports whether the cache is at its key limit for a new (non-overwrite) insertion.
+// Must be called with c.mu held.
+func (c *cache) atCapacity(key string) bool {
+	if c.maxKeys <= 0 {
+		return false
 	}
+	if _, exists := c.items[key]; exists {
+		return false // overwrite is always allowed
+	}
+	// Count non-expired live keys
+	live := 0
+	for _, v := range c.items {
+		if v != nil && !v.isExpired() {
+			live++
+		}
+	}
+	return live >= c.maxKeys
+}
 
+// Set stores a key-value pair without expiry
+func (c *cache) Set(key string, value interface{}) {
 	c.mu.Lock()
-	c.items[key] = &Entry{
-		value:  value,
-		expiry: exp,
+	if c.atCapacity(key) {
+		c.mu.Unlock()
+		c.statsRing.recordEviction()
+		return
 	}
+	c.items[key] = &Entry{value: value}
 	c.mu.Unlock()
 }
 
-// SetWithDuration stores a value with expiry (alias to Set)
+// SetWithDuration stores a value with expiry
 func (c *cache) SetWithDuration(key string, value interface{}, d time.Duration) {
-	c.Set(key, value, d)
+	c.mu.Lock()
+	if c.atCapacity(key) {
+		c.mu.Unlock()
+		c.statsRing.recordEviction()
+		return
+	}
+	c.items[key] = &Entry{
+		value:  value,
+		expiry: time.Now().Add(d),
+	}
+	c.mu.Unlock()
 }
 
 // Get retrieves a value by key
@@ -30,26 +56,33 @@ func (c *cache) Get(key string) (interface{}, bool) {
 	c.mu.RUnlock()
 
 	if !exists {
+		c.statsRing.recordMiss()
 		return nil, false
 	}
 
 	if entry.isExpired() {
-		// lazy delete (double-check under write lock)
-		c.mu.Lock()
-		if cur, ok := c.items[key]; ok && cur == entry {
-			delete(c.items, key)
+		if c.cleanupInterval == 0 {
+			// lazy delete only when no background cleanup
+			c.mu.Lock()
+			if cur, ok := c.items[key]; ok && cur == entry {
+				delete(c.items, key)
+			}
+			c.mu.Unlock()
 		}
-		c.mu.Unlock()
+		c.statsRing.recordMiss()
 		return nil, false
 	}
+	c.statsRing.recordHit()
 	return entry.value, true
 }
 
-// Delete removes a key
-func (c *cache) Delete(key string) {
+// Delete removes a key; returns true if it existed
+func (c *cache) Delete(key string) bool {
 	c.mu.Lock()
+	_, exists := c.items[key]
 	delete(c.items, key)
 	c.mu.Unlock()
+	return exists
 }
 
 // Exists checks if a key exists (and not expired)

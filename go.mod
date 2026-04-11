@@ -1,4 +1,4 @@
-module github.com/yourusername/go-memstore
+module github.com/San-B-09/go-memstore
 
 go 1.22.3
 
