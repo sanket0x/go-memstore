@@ -2,8 +2,7 @@ package memstore
 
 import "time"
 
-// startCleanup runs background cleanup if enabled
-func (c *cache) startCleanup() {
+func (c *cache[V]) startCleanup() {
 	if c.cleanupInterval <= 0 {
 		return
 	}
@@ -20,18 +19,16 @@ func (c *cache) startCleanup() {
 	}
 }
 
-// deleteExpired removes expired keys (protected by lock)
-func (c *cache) deleteExpired() {
+func (c *cache[V]) deleteExpired() {
 	now := time.Now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for k, v := range c.items {
-		if v == nil {
+		if v == nil || (!v.expiry.IsZero() && now.After(v.expiry)) {
 			delete(c.items, k)
-			continue
-		}
-		if !v.expiry.IsZero() && now.After(v.expiry) {
-			delete(c.items, k)
+			if c.tracker != nil {
+				c.tracker.onDelete(k)
+			}
 		}
 	}
 }

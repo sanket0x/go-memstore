@@ -2,67 +2,98 @@ package memstore
 
 import "time"
 
-// atCapacity reports whether the cache is at its key limit for a new (non-overwrite) insertion.
-// Must be called with c.mu held.
-func (c *cache) atCapacity(key string) bool {
-	if c.maxKeys <= 0 {
-		return false
-	}
-	if _, exists := c.items[key]; exists {
-		return false // overwrite is always allowed
-	}
-	// Count non-expired live keys
-	live := 0
+// liveCountLocked counts non-expired keys. Must be called with c.mu held.
+func (c *cache[V]) liveCountLocked() int {
+	n := 0
 	for _, v := range c.items {
 		if v != nil && !v.isExpired() {
-			live++
+			n++
 		}
 	}
-	return live >= c.maxKeys
+	return n
 }
 
-// Set stores a key-value pair without expiry
-func (c *cache) Set(key string, value interface{}) {
+// enforceCapacity makes room for a new key when the cache is full.
+// Returns false if the insert should be rejected (PolicyNone). Must be called with c.mu held.
+func (c *cache[V]) enforceCapacity(key string) bool {
+	if c.maxKeys <= 0 {
+		return true
+	}
+	if _, exists := c.items[key]; exists {
+		return true // overwrite always allowed
+	}
+	if c.liveCountLocked() < c.maxKeys {
+		return true
+	}
+	if c.tracker == nil {
+		return false // PolicyNone: reject
+	}
+	// LRU / LFU: evict one key to make room
+	if evictKey := c.tracker.evict(); evictKey != "" {
+		delete(c.items, evictKey)
+		c.statsRing.recordEviction()
+	}
+	return true
+}
+
+// Set stores a key-value pair without expiry.
+func (c *cache[V]) Set(key string, value V) {
 	c.mu.Lock()
-	if c.atCapacity(key) {
+	if !c.enforceCapacity(key) {
 		c.mu.Unlock()
 		c.statsRing.recordEviction()
 		return
 	}
-	c.items[key] = &Entry{value: value}
+	_, isOverwrite := c.items[key]
+	c.items[key] = &Entry[V]{value: value}
+	if c.tracker != nil {
+		if isOverwrite {
+			c.tracker.onAccess(key)
+		} else {
+			c.tracker.onInsert(key)
+		}
+	}
 	c.mu.Unlock()
 }
 
-// SetWithDuration stores a value with expiry
-func (c *cache) SetWithDuration(key string, value interface{}, d time.Duration) {
+// SetWithDuration stores a value that expires after d.
+func (c *cache[V]) SetWithDuration(key string, value V, d time.Duration) {
 	c.mu.Lock()
-	if c.atCapacity(key) {
+	if !c.enforceCapacity(key) {
 		c.mu.Unlock()
 		c.statsRing.recordEviction()
 		return
 	}
-	c.items[key] = &Entry{
-		value:  value,
-		expiry: time.Now().Add(d),
+	_, isOverwrite := c.items[key]
+	c.items[key] = &Entry[V]{value: value, expiry: time.Now().Add(d)}
+	if c.tracker != nil {
+		if isOverwrite {
+			c.tracker.onAccess(key)
+		} else {
+			c.tracker.onInsert(key)
+		}
 	}
 	c.mu.Unlock()
 }
 
-// Get retrieves a value by key
-func (c *cache) Get(key string) (interface{}, bool) {
-	// fast read lock
+// Get retrieves a value by key.
+// With LRU/LFU active, a write lock is used to update access order atomically.
+func (c *cache[V]) Get(key string) (V, bool) {
+	if c.tracker != nil {
+		return c.getTracked(key)
+	}
+
 	c.mu.RLock()
 	entry, exists := c.items[key]
 	c.mu.RUnlock()
 
 	if !exists {
 		c.statsRing.recordMiss()
-		return nil, false
+		var zero V
+		return zero, false
 	}
-
 	if entry.isExpired() {
 		if c.cleanupInterval == 0 {
-			// lazy delete only when no background cleanup
 			c.mu.Lock()
 			if cur, ok := c.items[key]; ok && cur == entry {
 				delete(c.items, key)
@@ -70,29 +101,54 @@ func (c *cache) Get(key string) (interface{}, bool) {
 			c.mu.Unlock()
 		}
 		c.statsRing.recordMiss()
-		return nil, false
+		var zero V
+		return zero, false
 	}
 	c.statsRing.recordHit()
 	return entry.value, true
 }
 
-// Delete removes a key; returns true if it existed
-func (c *cache) Delete(key string) bool {
+func (c *cache[V]) getTracked(key string) (V, bool) {
+	c.mu.Lock()
+	entry, exists := c.items[key]
+	if exists && !entry.isExpired() {
+		c.tracker.onAccess(key)
+		c.mu.Unlock()
+		c.statsRing.recordHit()
+		return entry.value, true
+	}
+	if exists && entry.isExpired() {
+		delete(c.items, key)
+		c.tracker.onDelete(key)
+	}
+	c.mu.Unlock()
+	c.statsRing.recordMiss()
+	var zero V
+	return zero, false
+}
+
+// Delete removes a key; returns true if it existed.
+func (c *cache[V]) Delete(key string) bool {
 	c.mu.Lock()
 	_, exists := c.items[key]
-	delete(c.items, key)
+	if exists {
+		delete(c.items, key)
+		if c.tracker != nil {
+			c.tracker.onDelete(key)
+		}
+	}
 	c.mu.Unlock()
 	return exists
 }
 
-// Exists checks if a key exists (and not expired)
-func (c *cache) Exists(key string) bool {
+// Exists checks if a key exists and has not expired.
+func (c *cache[V]) Exists(key string) bool {
 	_, ok := c.Get(key)
 	return ok
 }
 
-// Keys returns keys matching a simple pattern (supports '*' wildcard anywhere)
-func (c *cache) Keys(pattern string) []string {
+// Keys returns all live keys matching pattern (supports '*' wildcard).
+func (c *cache[V]) Keys(pattern string) []string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -108,15 +164,9 @@ func (c *cache) Keys(pattern string) []string {
 	return keys
 }
 
-// Len returns number of non-expired items
-func (c *cache) Len() int {
+// Len returns the number of live (non-expired) keys.
+func (c *cache[V]) Len() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	count := 0
-	for _, v := range c.items {
-		if v != nil && !v.isExpired() {
-			count++
-		}
-	}
-	return count
+	return c.liveCountLocked()
 }
