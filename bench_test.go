@@ -63,3 +63,65 @@ func BenchmarkConcurrentGet(b *testing.B) {
 		}
 	})
 }
+
+// --- Eviction policy benchmarks (Get only — most impacted by policy) ---
+
+func BenchmarkGetLRU(b *testing.B) {
+	const cap = 1000
+	c := NewCache[any](WithCleanupInterval(0), WithMaxKeys(cap, PolicyLRU))
+	defer c.Close()
+	for i := 0; i < cap; i++ {
+		c.Set(fmt.Sprintf("key%d", i), i)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		c.Get(fmt.Sprintf("key%d", i%cap))
+	}
+}
+
+func BenchmarkGetLFU(b *testing.B) {
+	const cap = 1000
+	c := NewCache[any](WithCleanupInterval(0), WithMaxKeys(cap, PolicyLFU))
+	defer c.Close()
+	for i := 0; i < cap; i++ {
+		c.Set(fmt.Sprintf("key%d", i), i)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		c.Get(fmt.Sprintf("key%d", i%cap))
+	}
+}
+
+func BenchmarkConcurrentGetLRU(b *testing.B) {
+	const cap = 1000
+	c := NewCache[any](WithCleanupInterval(0), WithMaxKeys(cap, PolicyLRU))
+	defer c.Close()
+	for i := 0; i < cap; i++ {
+		c.Set(fmt.Sprintf("key%d", i), i)
+	}
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		i := 0
+		for pb.Next() {
+			c.Get(fmt.Sprintf("key%d", i%cap))
+			i++
+		}
+	})
+}
+
+func BenchmarkConcurrentGetLFU(b *testing.B) {
+	const cap = 1000
+	c := NewCache[any](WithCleanupInterval(0), WithMaxKeys(cap, PolicyLFU))
+	defer c.Close()
+	for i := 0; i < cap; i++ {
+		c.Set(fmt.Sprintf("key%d", i), i)
+	}
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		i := 0
+		for pb.Next() {
+			c.Get(fmt.Sprintf("key%d", i%cap))
+			i++
+		}
+	})
+}

@@ -1,6 +1,6 @@
 # go-memstore
 
-A lightweight, concurrency-safe, in-memory key-value store for Go with per-key TTL, pattern-based key lookup, eviction policies, and 24-hour rolling stats.
+A lightweight, concurrency-safe, in-memory key-value store for Go with per-key TTL, pattern-based key lookup, and eviction policies.
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/San-B-09/go-memstore.svg)](https://pkg.go.dev/github.com/San-B-09/go-memstore)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -9,13 +9,13 @@ A lightweight, concurrency-safe, in-memory key-value store for Go with per-key T
 
 ## Features
 
-- **Generic** — declare the value type once; no type assertions at call sites
+- **Generic** - declare the value type once; no type assertions at call sites
 - Per-key TTL with lazy and/or background expiry
 - `Keys(pattern)` with `*` wildcard support
 - Eviction policies: `PolicyNone`, `PolicyLRU`, `PolicyLFU`
-- 24-hour rolling stats (hits, misses, evictions) via `StatsProvider`
+- Opt-in 24-hour rolling stats (zero overhead when disabled)
 - Safe for concurrent use by any number of goroutines
-- Zero dependencies beyond the standard library (testify for tests only)
+- No runtime dependencies
 
 ---
 
@@ -34,7 +34,7 @@ Requires Go 1.21+.
 ```go
 import memstore "github.com/San-B-09/go-memstore"
 
-// Declare the value type once at construction — no type assertions later
+// Declare the value type once - no type assertions later
 c := memstore.NewCache[string]()
 defer c.Close()
 
@@ -77,7 +77,7 @@ c := memstore.NewCache[string](memstore.WithCleanupInterval(10 * time.Second))
 Limit the maximum number of keys and choose what happens when the limit is reached.
 
 ```go
-// Reject new keys once 10 000 are stored
+// Reject new keys once 10,000 are stored
 c := memstore.NewCache[string](memstore.WithMaxKeys(10_000, memstore.PolicyNone))
 
 // Evict the least-recently-used key to make room
@@ -89,94 +89,89 @@ c := memstore.NewCache[string](memstore.WithMaxKeys(10_000, memstore.PolicyLFU))
 
 | Policy | Constant | Behaviour |
 |---|---|---|
-| No eviction | `PolicyNone` | New keys are silently rejected when the limit is reached. Overwrites always succeed. |
+| No eviction | `PolicyNone` | New keys are rejected when the limit is reached - `Set` returns `ErrCacheFull`. Overwrites always succeed. |
 | Least Recently Used | `PolicyLRU` | Evicts the key that has not been accessed for the longest time. O(1) via doubly-linked list. |
 | Least Frequently Used | `PolicyLFU` | Evicts the key with the fewest total accesses. Ties broken by recency. O(1) via frequency buckets. |
 
-> **Note:** With `PolicyLRU` or `PolicyLFU`, `Get` uses a write lock internally to update access order. This maintains correctness but reduces concurrent read throughput compared to `PolicyNone`. See [Benchmarks](#benchmarks) below.
+> `Set` and `SetWithDuration` return `error`. With `PolicyNone`, a full cache returns `ErrCacheFull` which can be checked with `errors.Is`. With `PolicyLRU`/`PolicyLFU`, a key is always evicted to make room so the error is always `nil`.
 
 ---
 
-## Stats (24-hour rolling window)
+## Stats (opt-in, 24-hour rolling window)
 
-Stats are **not** part of the core `Cache` interface. Access them via a type assertion to `StatsProvider`:
+Stats are **disabled by default** - no overhead unless you enable them. Use `WithStats()` which returns both an option and a handle:
 
 ```go
-c := memstore.NewCache[string]()
+statsOpt, stats := memstore.WithStats()
+c := memstore.NewCache[string](statsOpt)
 
 c.Set("k", "v")
 c.Get("k")       // hit
 c.Get("missing") // miss
 
-if sp, ok := c.(memstore.StatsProvider); ok {
-    s := sp.Stats()
-    _ = s.Hits      // uint64
-    _ = s.Misses    // uint64
-    _ = s.Evictions // uint64
-    _ = s.Keys      // int — live key count at time of call
-}
+s := stats.Snapshot()
+_ = s.Hits      // uint64
+_ = s.Misses    // uint64
+_ = s.Evictions // uint64
 ```
 
-Stats are accumulated in 5-minute buckets over a 24-hour sliding window. Buckets older than 24 hours are automatically discarded.
+Stats are accumulated in 5-minute buckets over a 24-hour sliding window.
 
 ---
 
-## API Reference
+## Reference
 
-### `Cache[V]` interface
+### `Cache[V]` methods
 
-| Method | Description |
-|---|---|
-| `Set(key, value)` | Store a value with no expiry |
-| `SetWithDuration(key, value, d)` | Store a value that expires after `d` |
-| `Get(key) (V, bool)` | Retrieve a value; `false` if missing or expired |
-| `Delete(key) bool` | Remove a key; returns `true` if it existed |
-| `Exists(key) bool` | `true` if the key exists and has not expired |
-| `Keys(pattern) []string` | All live keys matching the pattern (`*` wildcard) |
-| `Len() int` | Number of live (non-expired) keys |
-| `Close()` | Stop the background cleanup goroutine (idempotent) |
+| Method | Returns | Description |
+|---|---|---|
+| `Set(key, value)` | `error` | Store a value with no expiry; `ErrCacheFull` if rejected by `PolicyNone` |
+| `SetWithDuration(key, value, d)` | `error` | Store a value expiring after `d`; `ErrCacheFull` if rejected by `PolicyNone` |
+| `Get(key)` | `(V, bool)` | Retrieve a value; zero value + `false` if missing or expired |
+| `Delete(key)` | `bool` | Remove a key; `true` if it existed |
+| `Exists(key)` | `bool` | `true` if the key exists and has not expired |
+| `Keys(pattern)` | `[]string` | All live keys matching the pattern (`*` wildcard) |
+| `Len()` | `int` | Number of live (non-expired) keys |
+| `Close()` | - | Stop the background cleanup goroutine (idempotent) |
 
 ### Options
 
-| Option | Description |
-|---|---|
-| `WithCleanupInterval(d)` | Background sweep interval; `0` disables the goroutine |
-| `WithMaxKeys(n, policy)` | Cap the number of live keys and choose eviction behaviour |
-
-### `StatsProvider` interface
-
-```go
-type StatsProvider interface {
-    Stats() Stats
-}
-
-type Stats struct {
-    Hits      uint64
-    Misses    uint64
-    Evictions uint64
-    Keys      int
-}
-```
+| Option | Returns | Description |
+|---|---|---|
+| `WithCleanupInterval(d)` | `Option` | Background sweep interval; `0` disables the goroutine |
+| `WithMaxKeys(n, policy)` | `Option` | Cap the number of live keys and choose eviction behaviour |
+| `WithStats()` | `(Option, *StatsHandle)` | Enable rolling stats collection |
 
 ---
 
 ## Benchmarks
 
-Measured on Apple M-series (amd64 via Rosetta), Go 1.22, `PolicyNone` (no eviction tracking):
+Measured on Apple M-series (amd64 via Rosetta), Go 1.22. Stats disabled in all runs.
 
-| Benchmark | ops/sec | ns/op | B/op | allocs/op |
-|---|---|---|---|---|
-| `BenchmarkSet` | 2 274 292 | 536 | 188 | 4 |
-| `BenchmarkSetWithDuration` | 1 990 232 | 669 | 204 | 4 |
-| `BenchmarkGet` | 10 494 510 | 113 | 0 | 0 |
-| `BenchmarkConcurrentSet` | 2 352 498 | 472 | 90 | 4 |
-| `BenchmarkConcurrentGet` | 3 220 123 | 351 | 13 | 1 |
+**No eviction policy**
 
-**Key observations:**
+| Benchmark | ns/op | B/op | allocs/op |
+|---|---|---|---|
+| `BenchmarkSet` | 642 | 194 | 4 |
+| `BenchmarkSetWithDuration` | 733 | 207 | 4 |
+| `BenchmarkGet` | 14 | 0 | 0 |
+| `BenchmarkConcurrentSet` | 502 | 93 | 4 |
+| `BenchmarkConcurrentGet` | 164 | 13 | 1 |
 
-- `Get` is zero-allocation and fast (~113 ns) under `PolicyNone` because it uses a read lock that scales with concurrent readers.
-- With `PolicyLRU` or `PolicyLFU`, `Get` switches to a write lock to maintain access order — expect ~3–4× higher latency under concurrent reads.
-- The gap between sequential Get (113 ns) and concurrent Get (351 ns) is caused by the `statsRing` mutex, which is acquired on every `Get`. A future optimisation would switch to atomic counters within a bucket and only lock on bucket rotation (every 5 minutes).
+**With eviction policies (`Get` only - most impacted operation)**
+
+| Benchmark | ns/op | B/op | allocs/op |
+|---|---|---|---|
+| `BenchmarkGetLRU` | 170 | 13 | 1 |
+| `BenchmarkGetLFU` | 326 | 77 | 3 |
+| `BenchmarkConcurrentGetLRU` | 404 | 13 | 1 |
+| `BenchmarkConcurrentGetLFU` | 553 | 78 | 3 |
+
+**Notes:**
+- `Get` with no policy is 14 ns (read lock + map lookup, zero allocation).
+- LRU `Get` (170 ns) is only ~12× slower than no-policy because it uses a write lock but only moves a list pointer - no allocation in steady state.
+- LFU `Get` (326 ns / 3 allocs) - each access promotes a key between frequency buckets, which may allocate a new list node.
+- Concurrent LRU/LFU gets serialise on a write lock; throughput scales with single-goroutine latency.
 
 ---
 
@@ -194,4 +189,4 @@ go test -bench=. -benchmem ./...
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT - see [LICENSE](LICENSE).

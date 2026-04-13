@@ -6,9 +6,9 @@ import (
 )
 
 const (
-	statsBucketCount       = 288 // 24h / 5min
 	statsBucketGranularity = 5 * time.Minute
 	statsWindow            = 24 * time.Hour
+	statsBucketCount       = int(statsWindow / statsBucketGranularity)
 )
 
 // Stats holds aggregated cache metrics over a rolling 24-hour window.
@@ -16,17 +16,31 @@ type Stats struct {
 	Hits      uint64
 	Misses    uint64
 	Evictions uint64
-	Keys      int
 }
 
-// StatsProvider is an optional interface implemented by the cache.
-// It is not part of the core Cache interface; access it via type assertion:
+// StatsHandle provides access to rolling stats for a cache created with WithStats.
+type StatsHandle struct {
+	ring *statsRing
+}
+
+// Snapshot returns the aggregated metrics for the last 24 hours.
+func (h *StatsHandle) Snapshot() Stats {
+	return h.ring.snapshot()
+}
+
+// WithStats enables 24-hour rolling stats collection and returns the option
+// alongside a handle for reading snapshots. Stats are disabled by default.
 //
-//	if sp, ok := c.(memstore.StatsProvider); ok {
-//	    s := sp.Stats()
-//	}
-type StatsProvider interface {
-	Stats() Stats
+//	statsOpt, stats := memstore.WithStats()
+//	c := memstore.NewCache[string](statsOpt)
+//	s := stats.Snapshot()
+func WithStats() (Option, *StatsHandle) {
+	ring := &statsRing{}
+	handle := &StatsHandle{ring: ring}
+	opt := func(cfg *cacheConfig) {
+		cfg.statsRing = ring
+	}
+	return opt, handle
 }
 
 type statsBucket struct {
@@ -74,7 +88,7 @@ func (r *statsRing) recordEviction() {
 	r.mu.Unlock()
 }
 
-func (r *statsRing) snapshot(liveKeys int) Stats {
+func (r *statsRing) snapshot() Stats {
 	cutoff := time.Now().Add(-statsWindow)
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -89,11 +103,5 @@ func (r *statsRing) snapshot(liveKeys int) Stats {
 		s.Misses += b.misses
 		s.Evictions += b.evictions
 	}
-	s.Keys = liveKeys
 	return s
-}
-
-// Stats returns aggregated metrics for the last 24 hours.
-func (c *cache[V]) Stats() Stats {
-	return c.statsRing.snapshot(c.Len())
 }

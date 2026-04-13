@@ -1,17 +1,24 @@
 package memstore
 
 import (
+	"errors"
 	"sync"
 	"time"
 )
 
+// ErrCacheFull is returned by Set and SetWithDuration when the cache has reached
+// its MaxKeys limit and the eviction policy is PolicyNone.
+var ErrCacheFull = errors.New("cache is full")
+
 // Cache is the public interface for the in-memory store.
 type Cache[V any] interface {
 	// Set stores a key-value pair with no expiry.
-	Set(key string, value V)
+	// Returns ErrCacheFull if the cache is at capacity and the policy is PolicyNone.
+	Set(key string, value V) error
 
 	// SetWithDuration stores a value that expires after d.
-	SetWithDuration(key string, value V, d time.Duration)
+	// Returns ErrCacheFull if the cache is at capacity and the policy is PolicyNone.
+	SetWithDuration(key string, value V, d time.Duration) error
 
 	// Get retrieves a value; returns (value, true) if present and not expired.
 	Get(key string) (V, bool)
@@ -39,6 +46,7 @@ type cacheConfig struct {
 	maxKeys         int
 	evictionPolicy  EvictionPolicy
 	tracker         evictionTracker
+	statsRing       *statsRing // nil when stats are disabled (default)
 }
 
 // NewCache constructs a Cache[V] using functional options.
@@ -64,11 +72,10 @@ func NewCache[V any](opts ...Option) Cache[V] {
 
 // cache is the concrete implementation of Cache[V].
 type cache[V any] struct {
-	mu        sync.RWMutex
-	items     map[string]*Entry[V]
-	stopChan  chan struct{}
-	stopOnce  sync.Once
-	statsRing statsRing
+	mu       sync.RWMutex
+	items    map[string]*Entry[V]
+	stopChan chan struct{}
+	stopOnce sync.Once
 	cacheConfig
 }
 

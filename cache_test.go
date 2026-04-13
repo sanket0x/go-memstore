@@ -77,34 +77,31 @@ func (suite *CacheTestSuite) TestDeleteReturnsFalse() {
 }
 
 func (suite *CacheTestSuite) TestStatsHitsAndMisses() {
-	sp, ok := suite.cache.(StatsProvider)
-	suite.Require().True(ok, "cache must implement StatsProvider")
+	statsOpt, stats := WithStats()
+	c := NewCache[any](WithCleanupInterval(0), statsOpt)
+	defer c.Close()
 
-	suite.cache.Set("a", 1)
-	suite.cache.Get("a")       // hit
-	suite.cache.Get("a")       // hit
-	suite.cache.Get("missing") // miss
+	c.Set("a", 1)
+	c.Get("a")       // hit
+	c.Get("a")       // hit
+	c.Get("missing") // miss
 
-	s := sp.Stats()
+	s := stats.Snapshot()
 	suite.Equal(uint64(2), s.Hits)
 	suite.Equal(uint64(1), s.Misses)
 }
 
 func (suite *CacheTestSuite) TestStatsEvictionsOnMaxKeys() {
-	sp, ok := suite.cache.(StatsProvider)
-	suite.Require().True(ok)
-
-	c := NewCache[any](WithCleanupInterval(0), WithMaxKeys(2, PolicyNone))
+	statsOpt, stats := WithStats()
+	c := NewCache[any](WithCleanupInterval(0), WithMaxKeys(2, PolicyNone), statsOpt)
 	defer c.Close()
-	sp2 := c.(StatsProvider)
 
 	c.Set("k1", 1)
 	c.Set("k2", 2)
-	c.Set("k3", 3) // should be rejected
+	suite.ErrorIs(c.Set("k3", 3), ErrCacheFull)
 
 	suite.Equal(2, c.Len())
-	suite.Equal(uint64(1), sp2.Stats().Evictions)
-	_ = sp
+	suite.Equal(uint64(1), stats.Snapshot().Evictions)
 }
 
 func (suite *CacheTestSuite) TestMaxKeysNonePolicyRejectsNewKeys() {
