@@ -2,7 +2,7 @@
 
 A lightweight, concurrency-safe, in-memory key-value store for Go with per-key TTL, pattern-based key lookup, and eviction policies.
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/San-B-09/go-memstore.svg)](https://pkg.go.dev/github.com/San-B-09/go-memstore)
+[![Go Reference](https://pkg.go.dev/badge/github.com/sanket0x/go-memstore.svg)](https://pkg.go.dev/github.com/sanket0x/go-memstore)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ---
@@ -22,7 +22,7 @@ A lightweight, concurrency-safe, in-memory key-value store for Go with per-key T
 ## Installation
 
 ```bash
-go get github.com/San-B-09/go-memstore
+go get github.com/sanket0x/go-memstore
 ```
 
 Requires Go 1.21+.
@@ -32,7 +32,7 @@ Requires Go 1.21+.
 ## Quick Start
 
 ```go
-import memstore "github.com/San-B-09/go-memstore"
+import memstore "github.com/sanket0x/go-memstore"
 
 // Declare the value type once - no type assertions later
 c := memstore.NewCache[string]()

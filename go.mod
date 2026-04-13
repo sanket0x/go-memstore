@@ -1,4 +1,4 @@
-module github.com/San-B-09/go-memstore
+module github.com/sanket0x/go-memstore
 
 go 1.22.3
 

@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	memstore "github.com/San-B-09/go-memstore"
+	memstore "github.com/sanket0x/go-memstore"
 )
 
 func main() {
