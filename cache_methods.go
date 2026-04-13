@@ -31,18 +31,37 @@ func (c *cache[V]) enforceCapacity(key string) bool {
 	// LRU / LFU: evict one key to make room
 	if evictKey := c.tracker.evict(); evictKey != "" {
 		delete(c.items, evictKey)
-		c.statsRing.recordEviction()
+		c.recordEviction()
 	}
 	return true
 }
 
+func (c *cache[V]) recordHit() {
+	if c.statsRing != nil {
+		c.statsRing.recordHit()
+	}
+}
+
+func (c *cache[V]) recordMiss() {
+	if c.statsRing != nil {
+		c.statsRing.recordMiss()
+	}
+}
+
+func (c *cache[V]) recordEviction() {
+	if c.statsRing != nil {
+		c.statsRing.recordEviction()
+	}
+}
+
 // Set stores a key-value pair without expiry.
-func (c *cache[V]) Set(key string, value V) {
+// Returns ErrCacheFull if the cache is at capacity and the policy is PolicyNone.
+func (c *cache[V]) Set(key string, value V) error {
 	c.mu.Lock()
 	if !c.enforceCapacity(key) {
 		c.mu.Unlock()
-		c.statsRing.recordEviction()
-		return
+		c.recordEviction()
+		return ErrCacheFull
 	}
 	_, isOverwrite := c.items[key]
 	c.items[key] = &Entry[V]{value: value}
@@ -54,15 +73,17 @@ func (c *cache[V]) Set(key string, value V) {
 		}
 	}
 	c.mu.Unlock()
+	return nil
 }
 
 // SetWithDuration stores a value that expires after d.
-func (c *cache[V]) SetWithDuration(key string, value V, d time.Duration) {
+// Returns ErrCacheFull if the cache is at capacity and the policy is PolicyNone.
+func (c *cache[V]) SetWithDuration(key string, value V, d time.Duration) error {
 	c.mu.Lock()
 	if !c.enforceCapacity(key) {
 		c.mu.Unlock()
-		c.statsRing.recordEviction()
-		return
+		c.recordEviction()
+		return ErrCacheFull
 	}
 	_, isOverwrite := c.items[key]
 	c.items[key] = &Entry[V]{value: value, expiry: time.Now().Add(d)}
@@ -74,6 +95,7 @@ func (c *cache[V]) SetWithDuration(key string, value V, d time.Duration) {
 		}
 	}
 	c.mu.Unlock()
+	return nil
 }
 
 // Get retrieves a value by key.
@@ -88,7 +110,7 @@ func (c *cache[V]) Get(key string) (V, bool) {
 	c.mu.RUnlock()
 
 	if !exists {
-		c.statsRing.recordMiss()
+		c.recordMiss()
 		var zero V
 		return zero, false
 	}
@@ -100,11 +122,11 @@ func (c *cache[V]) Get(key string) (V, bool) {
 			}
 			c.mu.Unlock()
 		}
-		c.statsRing.recordMiss()
+		c.recordMiss()
 		var zero V
 		return zero, false
 	}
-	c.statsRing.recordHit()
+	c.recordHit()
 	return entry.value, true
 }
 
@@ -114,7 +136,7 @@ func (c *cache[V]) getTracked(key string) (V, bool) {
 	if exists && !entry.isExpired() {
 		c.tracker.onAccess(key)
 		c.mu.Unlock()
-		c.statsRing.recordHit()
+		c.recordHit()
 		return entry.value, true
 	}
 	if exists && entry.isExpired() {
@@ -122,7 +144,7 @@ func (c *cache[V]) getTracked(key string) (V, bool) {
 		c.tracker.onDelete(key)
 	}
 	c.mu.Unlock()
-	c.statsRing.recordMiss()
+	c.recordMiss()
 	var zero V
 	return zero, false
 }
