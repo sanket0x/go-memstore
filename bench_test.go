@@ -7,7 +7,7 @@ import (
 )
 
 func BenchmarkSet(b *testing.B) {
-	c := NewCache(WithCleanupInterval(0))
+	c := NewCache[any](WithCleanupInterval(0))
 	defer c.Close()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -16,7 +16,7 @@ func BenchmarkSet(b *testing.B) {
 }
 
 func BenchmarkSetWithDuration(b *testing.B) {
-	c := NewCache(WithCleanupInterval(0))
+	c := NewCache[any](WithCleanupInterval(0))
 	defer c.Close()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -25,7 +25,7 @@ func BenchmarkSetWithDuration(b *testing.B) {
 }
 
 func BenchmarkGet(b *testing.B) {
-	c := NewCache(WithCleanupInterval(0))
+	c := NewCache[any](WithCleanupInterval(0))
 	defer c.Close()
 	c.Set("key", "value")
 	b.ResetTimer()
@@ -35,7 +35,7 @@ func BenchmarkGet(b *testing.B) {
 }
 
 func BenchmarkConcurrentSet(b *testing.B) {
-	c := NewCache(WithCleanupInterval(0))
+	c := NewCache[any](WithCleanupInterval(0))
 	defer c.Close()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
@@ -48,7 +48,7 @@ func BenchmarkConcurrentSet(b *testing.B) {
 }
 
 func BenchmarkConcurrentGet(b *testing.B) {
-	c := NewCache(WithCleanupInterval(0))
+	c := NewCache[any](WithCleanupInterval(0))
 	defer c.Close()
 	// Pre-populate
 	for i := 0; i < 1000; i++ {

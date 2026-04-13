@@ -94,6 +94,6 @@ func (r *statsRing) snapshot(liveKeys int) Stats {
 }
 
 // Stats returns aggregated metrics for the last 24 hours.
-func (c *cache) Stats() Stats {
+func (c *cache[V]) Stats() Stats {
 	return c.statsRing.snapshot(c.Len())
 }

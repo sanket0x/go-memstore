@@ -9,23 +9,34 @@ const (
 	PolicyNone EvictionPolicy = iota
 
 	// PolicyLRU evicts the least-recently-used key to make room.
-	// Not yet implemented — reserved for v1.1.
 	PolicyLRU
 
 	// PolicyLFU evicts the least-frequently-used key to make room.
-	// Not yet implemented — reserved for v1.1.
 	PolicyLFU
 )
+
+// evictionTracker is the internal interface for LRU/LFU bookkeeping.
+// All methods are called with c.mu held.
+type evictionTracker interface {
+	onInsert(key string)
+	onAccess(key string)
+	onDelete(key string)
+	evict() string // removes and returns the key to evict
+}
 
 // WithMaxKeys sets the maximum number of keys the cache will hold and the
 // eviction policy to apply when the limit is reached.
 //
-// Example — reject new keys once 1 000 are stored:
-//
-//	c := memstore.NewCache(memstore.WithMaxKeys(1000, memstore.PolicyNone))
+//	c := memstore.NewCache[string](memstore.WithMaxKeys(1000, memstore.PolicyLRU))
 func WithMaxKeys(n int, policy EvictionPolicy) Option {
-	return func(c *cache) {
-		c.maxKeys = n
-		c.evictionPolicy = policy
+	return func(cfg *cacheConfig) {
+		cfg.maxKeys = n
+		cfg.evictionPolicy = policy
+		switch policy {
+		case PolicyLRU:
+			cfg.tracker = newLRUTracker()
+		case PolicyLFU:
+			cfg.tracker = newLFUTracker()
+		}
 	}
 }

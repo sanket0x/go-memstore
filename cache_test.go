@@ -1,6 +1,7 @@
 package memstore
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -10,12 +11,11 @@ import (
 
 type CacheTestSuite struct {
 	suite.Suite
-	cache Cache
+	cache Cache[any]
 }
 
 func (suite *CacheTestSuite) SetupTest() {
-	// lazy expiry for speed in tests
-	suite.cache = NewCache(WithCleanupInterval(0))
+	suite.cache = NewCache[any](WithCleanupInterval(0))
 }
 
 func TestCacheTestSuite(t *testing.T) {
@@ -94,7 +94,7 @@ func (suite *CacheTestSuite) TestStatsEvictionsOnMaxKeys() {
 	sp, ok := suite.cache.(StatsProvider)
 	suite.Require().True(ok)
 
-	c := NewCache(WithCleanupInterval(0), WithMaxKeys(2, PolicyNone))
+	c := NewCache[any](WithCleanupInterval(0), WithMaxKeys(2, PolicyNone))
 	defer c.Close()
 	sp2 := c.(StatsProvider)
 
@@ -108,7 +108,7 @@ func (suite *CacheTestSuite) TestStatsEvictionsOnMaxKeys() {
 }
 
 func (suite *CacheTestSuite) TestMaxKeysNonePolicyRejectsNewKeys() {
-	c := NewCache(WithCleanupInterval(0), WithMaxKeys(2, PolicyNone))
+	c := NewCache[any](WithCleanupInterval(0), WithMaxKeys(2, PolicyNone))
 	defer c.Close()
 
 	c.Set("a", 1)
@@ -121,7 +121,7 @@ func (suite *CacheTestSuite) TestMaxKeysNonePolicyRejectsNewKeys() {
 }
 
 func (suite *CacheTestSuite) TestMaxKeysAllowsOverwrite() {
-	c := NewCache(WithCleanupInterval(0), WithMaxKeys(2, PolicyNone))
+	c := NewCache[any](WithCleanupInterval(0), WithMaxKeys(2, PolicyNone))
 	defer c.Close()
 
 	c.Set("a", 1)
@@ -155,9 +155,115 @@ func (suite *CacheTestSuite) TestConcurrentAccess() {
 	wg.Wait()
 }
 
+func (suite *CacheTestSuite) TestLRUEvictsLeastRecentlyUsed() {
+	c := NewCache[any](WithCleanupInterval(0), WithMaxKeys(3, PolicyLRU))
+	defer c.Close()
+
+	c.Set("a", 1)
+	c.Set("b", 2)
+	c.Set("c", 3)
+
+	// Access "a" and "b" — making "c" the least recently used
+	c.Get("a")
+	c.Get("b")
+
+	// Adding "d" should evict "c"
+	c.Set("d", 4)
+
+	suite.Equal(3, c.Len())
+	_, ok := c.Get("c")
+	suite.False(ok, "c should have been evicted")
+	_, ok = c.Get("d")
+	suite.True(ok)
+}
+
+func (suite *CacheTestSuite) TestLRUOverwriteUpdatesRecency() {
+	c := NewCache[any](WithCleanupInterval(0), WithMaxKeys(2, PolicyLRU))
+	defer c.Close()
+
+	c.Set("a", 1)
+	c.Set("b", 2)
+	c.Set("a", 99) // overwrite — makes "a" most recent, "b" least recent
+
+	// Adding "c" should evict "b"
+	c.Set("c", 3)
+
+	suite.Equal(2, c.Len())
+	_, ok := c.Get("b")
+	suite.False(ok, "b should have been evicted")
+	val, ok := c.Get("a")
+	suite.True(ok)
+	suite.Equal(99, val)
+}
+
+func (suite *CacheTestSuite) TestLFUEvictsLeastFrequentlyUsed() {
+	c := NewCache[any](WithCleanupInterval(0), WithMaxKeys(3, PolicyLFU))
+	defer c.Close()
+
+	c.Set("a", 1)
+	c.Set("b", 2)
+	c.Set("c", 3)
+
+	// Access "a" 3 times, "b" 2 times, "c" 1 time (just the insert)
+	c.Get("a")
+	c.Get("a")
+	c.Get("a")
+	c.Get("b")
+	c.Get("b")
+
+	// Adding "d" should evict "c" (lowest frequency = 1)
+	c.Set("d", 4)
+
+	suite.Equal(3, c.Len())
+	_, ok := c.Get("c")
+	suite.False(ok, "c should have been evicted (lowest freq)")
+	_, ok = c.Get("d")
+	suite.True(ok)
+}
+
+func (suite *CacheTestSuite) TestLFUTieBreaksByRecency() {
+	c := NewCache[any](WithCleanupInterval(0), WithMaxKeys(2, PolicyLFU))
+	defer c.Close()
+
+	c.Set("a", 1)
+	c.Set("b", 2) // both at freq=1; "a" is older (inserted first = least recent)
+
+	// Adding "c" should evict "a" (same freq, least recently inserted)
+	c.Set("c", 3)
+
+	suite.Equal(2, c.Len())
+	_, ok := c.Get("a")
+	suite.False(ok, "a should have been evicted (same freq, least recent)")
+	_, ok = c.Get("b")
+	suite.True(ok)
+}
+
+func (suite *CacheTestSuite) TestLRUConcurrentAccess() {
+	c := NewCache[any](WithCleanupInterval(0), WithMaxKeys(50, PolicyLRU))
+	defer c.Close()
+
+	// Pre-fill
+	for i := 0; i < 50; i++ {
+		c.Set(fmt.Sprintf("k%d", i), i)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(20)
+	for i := 0; i < 20; i++ {
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < 20; j++ {
+				c.Set(fmt.Sprintf("new-%d-%d", id, j), id)
+				c.Get(fmt.Sprintf("k%d", j%50))
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
 func (suite *CacheTestSuite) TestBackgroundCleanupRemovesExpiredItems() {
 	// build cache with a fast cleanup interval
-	c := NewCache(WithCleanupInterval(10 * time.Millisecond))
+	c := NewCache[any](WithCleanupInterval(10 * time.Millisecond))
 	defer c.Close()
 
 	c.SetWithDuration("t", "v", 20*time.Millisecond)
