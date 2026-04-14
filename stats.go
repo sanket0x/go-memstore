@@ -28,8 +28,8 @@ func (h *StatsHandle) Snapshot() Stats {
 	return h.ring.snapshot()
 }
 
-// WithStats enables 24-hour rolling stats collection and returns the option
-// alongside a handle for reading snapshots. Stats are disabled by default.
+// WithStats returns an Option that enables 24-hour rolling stats collection
+// and a StatsHandle for reading snapshots. Stats are disabled by default.
 //
 //	statsOpt, stats := memstore.WithStats()
 //	c := memstore.NewCache[string](statsOpt)

@@ -2,8 +2,6 @@ package memstore
 
 import "time"
 
-// liveCountLocked counts non-expired keys. Must be called with c.mu held.
-// Used only by Len() — hot paths use c.mapSize instead.
 func (c *cache[V]) liveCountLocked() int {
 	n := 0
 	for _, v := range c.items {
@@ -14,22 +12,20 @@ func (c *cache[V]) liveCountLocked() int {
 	return n
 }
 
-// enforceCapacity makes room for a new key when the cache is full.
-// Returns false if the insert should be rejected (PolicyNone). Must be called with c.mu held.
+// enforceCapacity must be called with c.mu held.
 func (c *cache[V]) enforceCapacity(key string) bool {
 	if c.maxKeys <= 0 {
 		return true
 	}
 	if _, exists := c.items[key]; exists {
-		return true // overwrite always allowed
+		return true
 	}
 	if c.mapSize < c.maxKeys {
 		return true
 	}
 	if c.tracker == nil {
-		return false // PolicyNone: reject
+		return false
 	}
-	// LRU / LFU: evict one key to make room
 	c.trackerMu.Lock()
 	evictKey := c.tracker.evict()
 	c.trackerMu.Unlock()
@@ -145,9 +141,6 @@ func (c *cache[V]) Get(key string) (V, bool) {
 	return entry.value, true
 }
 
-// getTracked handles Get when an eviction tracker is active.
-// Map reads use RLock; tracker updates use the separate trackerMu.
-// Lock ordering: always mu before trackerMu (never hold trackerMu while acquiring mu).
 func (c *cache[V]) getTracked(key string) (V, bool) {
 	c.mu.RLock()
 	entry, exists := c.items[key]

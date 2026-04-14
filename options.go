@@ -2,11 +2,11 @@ package memstore
 
 import "time"
 
-// Option configures the cache.
+// Option is a functional option for NewCache.
 type Option func(*cacheConfig)
 
-// WithCleanupInterval sets the background cleanup interval.
-// If interval == 0, background cleanup is disabled and expiry is lazy (on access).
+// WithCleanupInterval returns an Option that sets the background cleanup interval.
+// A value of 0 disables background cleanup; expired entries are removed on the next access instead.
 func WithCleanupInterval(interval time.Duration) Option {
 	return func(cfg *cacheConfig) {
 		cfg.cleanupInterval = interval

@@ -4,7 +4,6 @@ import "container/list"
 
 // lfuTracker implements evictionTracker using the O(1) LFU algorithm.
 // Keys at the same frequency are ordered by recency (front = most recent).
-// All methods must be called with c.mu held.
 type lfuTracker struct {
 	keyFreq    map[string]int
 	freqBucket map[int]*list.List
@@ -64,8 +63,6 @@ func (t *lfuTracker) onDelete(key string) {
 	delete(t.keyEl, key)
 }
 
-// evict removes and returns the least-frequently-used key.
-// Among keys at the same frequency, the least-recently-used is chosen.
 func (t *lfuTracker) evict() string {
 	bucket := t.freqBucket[t.minFreq]
 	if bucket == nil || bucket.Len() == 0 {

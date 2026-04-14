@@ -2,14 +2,8 @@ package memstore
 
 import "strings"
 
-// matchPattern supports '*' wildcard anywhere in the pattern.
-// Examples:
-//
-//	"*" -> matches everything
-//	"prefix*" -> prefix match
-//	"*suffix" -> suffix match
-//	"pre*mid*suf" -> matches parts in order
-//	"exact" -> exact match
+// matchPattern reports whether s matches pattern, where '*' is a wildcard
+// that matches any sequence of characters (including empty).
 func matchPattern(s, pattern string) bool {
 	if pattern == "" || pattern == "*" {
 		return true
