@@ -10,7 +10,7 @@ import (
 // its MaxKeys limit and the eviction policy is PolicyNone.
 var ErrCacheFull = errors.New("cache is full")
 
-// Cache is the public interface for the in-memory store.
+// Cache is an in-memory key-value store.
 type Cache[V any] interface {
 	// Set stores a key-value pair with no expiry.
 	// Returns ErrCacheFull if the cache is at capacity and the policy is PolicyNone.
@@ -39,8 +39,6 @@ type Cache[V any] interface {
 	Close()
 }
 
-// cacheConfig holds all configuration that does not depend on the value type V.
-// Option functions apply to *cacheConfig, keeping option call sites type-parameter-free.
 type cacheConfig struct {
 	cleanupInterval time.Duration
 	maxKeys         int
@@ -49,7 +47,7 @@ type cacheConfig struct {
 	statsRing       *statsRing // nil when stats are disabled (default)
 }
 
-// NewCache constructs a Cache[V] using functional options.
+// NewCache returns a new Cache[V].
 //
 // Example:
 //
@@ -70,16 +68,16 @@ func NewCache[V any](opts ...Option) Cache[V] {
 	return c
 }
 
-// cache is the concrete implementation of Cache[V].
 type cache[V any] struct {
-	mu       sync.RWMutex
-	items    map[string]*Entry[V]
-	stopChan chan struct{}
-	stopOnce sync.Once
+	mu        sync.RWMutex  // protects items and mapSize
+	trackerMu sync.Mutex    // protects tracker; always acquired after mu, never before
+	items     map[string]*Entry[V]
+	mapSize   int // total entries in items; maintained on every insert/delete
+	stopChan  chan struct{}
+	stopOnce  sync.Once
 	cacheConfig
 }
 
-// Close stops the background cleanup goroutine (safe to call multiple times).
 func (c *cache[V]) Close() {
 	c.stopOnce.Do(func() {
 		if c.cleanupInterval > 0 && c.stopChan != nil {

@@ -2,7 +2,6 @@ package memstore
 
 import "time"
 
-// liveCountLocked counts non-expired keys. Must be called with c.mu held.
 func (c *cache[V]) liveCountLocked() int {
 	n := 0
 	for _, v := range c.items {
@@ -13,24 +12,26 @@ func (c *cache[V]) liveCountLocked() int {
 	return n
 }
 
-// enforceCapacity makes room for a new key when the cache is full.
-// Returns false if the insert should be rejected (PolicyNone). Must be called with c.mu held.
+// enforceCapacity must be called with c.mu held.
 func (c *cache[V]) enforceCapacity(key string) bool {
 	if c.maxKeys <= 0 {
 		return true
 	}
 	if _, exists := c.items[key]; exists {
-		return true // overwrite always allowed
+		return true
 	}
-	if c.liveCountLocked() < c.maxKeys {
+	if c.mapSize < c.maxKeys {
 		return true
 	}
 	if c.tracker == nil {
-		return false // PolicyNone: reject
+		return false
 	}
-	// LRU / LFU: evict one key to make room
-	if evictKey := c.tracker.evict(); evictKey != "" {
+	c.trackerMu.Lock()
+	evictKey := c.tracker.evict()
+	c.trackerMu.Unlock()
+	if evictKey != "" {
 		delete(c.items, evictKey)
+		c.mapSize--
 		c.recordEviction()
 	}
 	return true
@@ -65,12 +66,17 @@ func (c *cache[V]) Set(key string, value V) error {
 	}
 	_, isOverwrite := c.items[key]
 	c.items[key] = &Entry[V]{value: value}
+	if !isOverwrite {
+		c.mapSize++
+	}
 	if c.tracker != nil {
+		c.trackerMu.Lock()
 		if isOverwrite {
 			c.tracker.onAccess(key)
 		} else {
 			c.tracker.onInsert(key)
 		}
+		c.trackerMu.Unlock()
 	}
 	c.mu.Unlock()
 	return nil
@@ -87,19 +93,23 @@ func (c *cache[V]) SetWithDuration(key string, value V, d time.Duration) error {
 	}
 	_, isOverwrite := c.items[key]
 	c.items[key] = &Entry[V]{value: value, expiry: time.Now().Add(d)}
+	if !isOverwrite {
+		c.mapSize++
+	}
 	if c.tracker != nil {
+		c.trackerMu.Lock()
 		if isOverwrite {
 			c.tracker.onAccess(key)
 		} else {
 			c.tracker.onInsert(key)
 		}
+		c.trackerMu.Unlock()
 	}
 	c.mu.Unlock()
 	return nil
 }
 
 // Get retrieves a value by key.
-// With LRU/LFU active, a write lock is used to update access order atomically.
 func (c *cache[V]) Get(key string) (V, bool) {
 	if c.tracker != nil {
 		return c.getTracked(key)
@@ -119,6 +129,7 @@ func (c *cache[V]) Get(key string) (V, bool) {
 			c.mu.Lock()
 			if cur, ok := c.items[key]; ok && cur == entry {
 				delete(c.items, key)
+				c.mapSize--
 			}
 			c.mu.Unlock()
 		}
@@ -131,19 +142,31 @@ func (c *cache[V]) Get(key string) (V, bool) {
 }
 
 func (c *cache[V]) getTracked(key string) (V, bool) {
-	c.mu.Lock()
+	c.mu.RLock()
 	entry, exists := c.items[key]
+	c.mu.RUnlock()
+
 	if exists && !entry.isExpired() {
-		c.tracker.onAccess(key)
-		c.mu.Unlock()
+		c.trackerMu.Lock()
+		c.tracker.onAccess(key) // no-op if key was concurrently deleted
+		c.trackerMu.Unlock()
 		c.recordHit()
 		return entry.value, true
 	}
+
 	if exists && entry.isExpired() {
-		delete(c.items, key)
-		c.tracker.onDelete(key)
+		c.mu.Lock()
+		// Double-check: another goroutine may have already cleaned this up or replaced it.
+		if cur, ok := c.items[key]; ok && cur == entry {
+			delete(c.items, key)
+			c.mapSize--
+			c.trackerMu.Lock()
+			c.tracker.onDelete(key)
+			c.trackerMu.Unlock()
+		}
+		c.mu.Unlock()
 	}
-	c.mu.Unlock()
+
 	c.recordMiss()
 	var zero V
 	return zero, false
@@ -155,8 +178,11 @@ func (c *cache[V]) Delete(key string) bool {
 	_, exists := c.items[key]
 	if exists {
 		delete(c.items, key)
+		c.mapSize--
 		if c.tracker != nil {
+			c.trackerMu.Lock()
 			c.tracker.onDelete(key)
+			c.trackerMu.Unlock()
 		}
 	}
 	c.mu.Unlock()

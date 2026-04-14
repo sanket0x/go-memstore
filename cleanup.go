@@ -26,8 +26,11 @@ func (c *cache[V]) deleteExpired() {
 	for k, v := range c.items {
 		if v == nil || (!v.expiry.IsZero() && now.After(v.expiry)) {
 			delete(c.items, k)
+			c.mapSize--
 			if c.tracker != nil {
+				c.trackerMu.Lock()
 				c.tracker.onDelete(k)
+				c.trackerMu.Unlock()
 			}
 		}
 	}

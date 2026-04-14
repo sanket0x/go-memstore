@@ -152,26 +152,40 @@ Measured on Apple M-series (amd64 via Rosetta), Go 1.22. Stats disabled in all r
 
 | Benchmark | ns/op | B/op | allocs/op |
 |---|---|---|---|
-| `BenchmarkSet` | 642 | 194 | 4 |
-| `BenchmarkSetWithDuration` | 733 | 207 | 4 |
+| `BenchmarkSet` | 661 | 202 | 4 |
+| `BenchmarkConcurrentSet` | 575 | 93 | 4 |
+| `BenchmarkSetWithDuration` | 699 | 222 | 4 |
+| `BenchmarkConcurrentSetWithDuration` | 664 | 95 | 4 |
 | `BenchmarkGet` | 14 | 0 | 0 |
-| `BenchmarkConcurrentSet` | 502 | 93 | 4 |
-| `BenchmarkConcurrentGet` | 164 | 13 | 1 |
+| `BenchmarkConcurrentGet` | 162 | 13 | 1 |
 
-**With eviction policies (`Get` only - most impacted operation)**
+**LRU eviction policy** (cache pre-filled to capacity; every Set triggers an eviction)
 
 | Benchmark | ns/op | B/op | allocs/op |
 |---|---|---|---|
-| `BenchmarkGetLRU` | 170 | 13 | 1 |
-| `BenchmarkGetLFU` | 326 | 77 | 3 |
-| `BenchmarkConcurrentGetLRU` | 404 | 13 | 1 |
-| `BenchmarkConcurrentGetLFU` | 553 | 78 | 3 |
+| `BenchmarkSetLRU` | 490 | 146 | 6 |
+| `BenchmarkConcurrentSetLRU` | 716 | 135 | 5 |
+| `BenchmarkSetWithDurationLRU` | 603 | 146 | 6 |
+| `BenchmarkConcurrentSetWithDurationLRU` | 832 | 137 | 5 |
+| `BenchmarkGetLRU` | 158 | 13 | 1 |
+| `BenchmarkConcurrentGetLRU` | 379 | 13 | 1 |
+
+**LFU eviction policy** (cache pre-filled to capacity; every Set triggers an eviction)
+
+| Benchmark | ns/op | B/op | allocs/op |
+|---|---|---|---|
+| `BenchmarkSetLFU` | 598 | 147 | 6 |
+| `BenchmarkConcurrentSetLFU` | 845 | 189 | 6 |
+| `BenchmarkSetWithDurationLFU` | 733 | 147 | 6 |
+| `BenchmarkConcurrentSetWithDurationLFU` | 1031 | 189 | 6 |
+| `BenchmarkGetLFU` | 322 | 77 | 3 |
+| `BenchmarkConcurrentGetLFU` | 630 | 78 | 3 |
 
 **Notes:**
 - `Get` with no policy is 14 ns (read lock + map lookup, zero allocation).
-- LRU `Get` (170 ns) is only ~12× slower than no-policy because it uses a write lock but only moves a list pointer - no allocation in steady state.
-- LFU `Get` (326 ns / 3 allocs) - each access promotes a key between frequency buckets, which may allocate a new list node.
-- Concurrent LRU/LFU gets serialise on a write lock; throughput scales with single-goroutine latency.
+- LRU/LFU `Set` benchmarks are run against a full cache so every operation evicts — this reflects the worst-case steady-state throughput.
+- LRU `Get` (158 ns / 1 alloc) — updates the access-order list via a separate tracker lock; concurrent map reads proceed in parallel.
+- LFU `Get` (322 ns / 3 allocs) — each access promotes a key between frequency buckets, which may allocate a new list node.
 
 ---
 

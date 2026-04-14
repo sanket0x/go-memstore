@@ -4,7 +4,6 @@ import "container/list"
 
 // lruTracker implements evictionTracker using a doubly-linked list.
 // Front = most recently used, Back = least recently used.
-// All methods must be called with c.mu held.
 type lruTracker struct {
 	list  *list.List
 	index map[string]*list.Element
@@ -35,7 +34,6 @@ func (t *lruTracker) onDelete(key string) {
 	}
 }
 
-// evict removes and returns the least-recently-used key.
 func (t *lruTracker) evict() string {
 	el := t.list.Back()
 	if el == nil {
