@@ -69,8 +69,8 @@ func NewCache[V any](opts ...Option) Cache[V] {
 }
 
 type cache[V any] struct {
-	mu        sync.RWMutex  // protects items and mapSize
-	trackerMu sync.Mutex    // protects tracker; always acquired after mu, never before
+	mu        sync.RWMutex // protects items and mapSize
+	trackerMu sync.Mutex   // protects tracker; always acquired after mu, never before
 	items     map[string]*Entry[V]
 	mapSize   int // total entries in items; maintained on every insert/delete
 	stopChan  chan struct{}

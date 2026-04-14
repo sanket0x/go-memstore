@@ -2,6 +2,10 @@
 
 A lightweight, concurrency-safe, in-memory key-value store for Go with per-key TTL, pattern-based key lookup, and eviction policies.
 
+[![CI](https://github.com/sanket0x/go-memstore/actions/workflows/ci.yml/badge.svg)](https://github.com/sanket0x/go-memstore/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/sanket0x/go-memstore/branch/main/graph/badge.svg)](https://codecov.io/gh/sanket0x/go-memstore)
+[![Release](https://img.shields.io/github/v/tag/sanket0x/go-memstore?label=release)](https://github.com/sanket0x/go-memstore/tags)
+[![Go Report Card](https://goreportcard.com/badge/github.com/sanket0x/go-memstore)](https://goreportcard.com/report/github.com/sanket0x/go-memstore)
 [![Go Reference](https://pkg.go.dev/badge/github.com/sanket0x/go-memstore.svg)](https://pkg.go.dev/github.com/sanket0x/go-memstore)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
