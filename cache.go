@@ -72,10 +72,12 @@ func NewCache[V any](opts ...Option) Cache[V] {
 
 // cache is the concrete implementation of Cache[V].
 type cache[V any] struct {
-	mu       sync.RWMutex
-	items    map[string]*Entry[V]
-	stopChan chan struct{}
-	stopOnce sync.Once
+	mu        sync.RWMutex
+	trackerMu sync.Mutex
+	items     map[string]*Entry[V]
+	mapSize   int // number of entries currently in items (maintained on insert/delete)
+	stopChan  chan struct{}
+	stopOnce  sync.Once
 	cacheConfig
 }
 
